@@ -6,3 +6,4 @@ outputs/
 *.pt
 *.pth
 assignment-dataset
+.DS_Store
