@@ -62,21 +62,15 @@ def visualize(img_path, out, class_names):
 
 def collect_samples(root):
     samples = []
-    det_val = root / "detection" / "val" / "images"
-    if det_val.exists():
-        samples += sorted(det_val.iterdir())[:2]
-    seg_val = root / "segmentation" / "val" / "images"
-    if seg_val.exists():
-        samples += sorted(seg_val.iterdir())[:2]
     cls_val = root / "classification" / "val"
     if cls_val.exists():
         for d in sorted(cls_val.iterdir()):
-            if d.is_dir():
-                files = sorted(d.iterdir())
-                if files:
-                    samples.append(files[0])
-                    break
-    return [p for p in samples if p.suffix.lower() in (".jpg", ".png")]
+            if not d.is_dir():
+                continue
+            files = sorted(p for p in d.iterdir() if p.suffix.lower() in (".jpg", ".png"))
+            if files:
+                samples.append(files[0])
+    return samples
 
 
 def main():

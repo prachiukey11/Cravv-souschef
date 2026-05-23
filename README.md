@@ -44,7 +44,7 @@ Best epoch on validation set:
 | Cooking state       | Top-1   | ≥ 0.90 | **0.966** |
 | Average             | mean    |   —    | **0.933** |
 
-Graphs of loss and metrics per epoch are in [`graphs/`](graphs/).
+Graphs of loss and metrics per epoch are in [`graphs/`](graphs/). Sample inference outputs are in [`samples/`](samples/). The architecture and design choices are written up in [`technical_note.md`](technical_note.md).
 
 ## Folder Structure
 
@@ -59,6 +59,8 @@ inference.py               loads checkpoint, draws visualizations
 graph.py                   reads training_log.csv, saves PNG plots
 analysie.py                prints dataset distribution
 graphs/                    plots of loss and metrics per epoch
+samples/                   example inference visualizations
+technical_note.md          one-page architecture and design memo
 ```
 
 ## How to Run
