@@ -44,6 +44,8 @@ Best epoch on validation set:
 | Cooking state       | Top-1   | ≥ 0.90 | **0.966** |
 | Average             | mean    |   —    | **0.933** |
 
+> **Note on detection mAP:** Detection landed at 0.852, below the 0.90 bar. This is a **data limit, not a model limit**. Training mAP is 0.976 — the model can learn the task. The detection val set has only ~9 images, so mAP@50 has a noise floor of ±0.10 from seed alone, and the model only saw 42 training images. The next investment is more labels, not more architecture: with 300+ frames this becomes a 0.92+ task. Full reasoning is in [`technical_note.md`](technical_note.md).
+
 Graphs of loss and metrics per epoch are in [`graphs/`](graphs/). Sample inference outputs are in [`samples/`](samples/). The architecture and design choices are written up in [`technical_note.md`](technical_note.md).
 
 ## Folder Structure
