@@ -1,0 +1,9 @@
+__pycache__/
+.venv/
+dataset/
+runs/
+outputs/
+assignment-dataset
+.DS_Store
+output_2/
+training_log*.csv
