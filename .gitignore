@@ -8,3 +8,4 @@ outputs/
 assignment-dataset
 .DS_Store
 output_2/
+training_log*.csv

@@ -13,5 +13,5 @@ train:
 
 loss_weights:
   seg: 1.0
-  det: 1.0
+  det: 2.0
   cls: 0.5

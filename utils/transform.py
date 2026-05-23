@@ -87,11 +87,29 @@ class DetectionDataset(Dataset):
                     h / h0,
                 ]).clamp(0, 1)
 
-        if self.train and random.random() > 0.5:
-            img = TF.hflip(img)
-            for c in range(3):
-                if conf[c] > 0:
-                    box[c, 0] = 1.0 - box[c, 0]
+        if self.train:
+            if random.random() > 0.5:
+                img = TF.hflip(img)
+                for c in range(3):
+                    if conf[c] > 0:
+                        box[c, 0] = 1.0 - box[c, 0]
+
+            if random.random() > 0.5:
+                img = TF.adjust_brightness(img, random.uniform(0.8, 1.2))
+                img = TF.adjust_contrast(img, random.uniform(0.8, 1.2))
+                img = TF.adjust_saturation(img, random.uniform(0.8, 1.2))
+
+            if random.random() > 0.5:
+                pad = random.randint(8, 48)
+                img = TF.pad(img, [pad, pad, pad, pad], fill=0)
+                img = TF.resize(img, (self.size, self.size))
+                s = self.size / (self.size + 2 * pad)
+                for c in range(3):
+                    if conf[c] > 0:
+                        box[c, 0] = 0.5 + (box[c, 0] - 0.5) * s
+                        box[c, 1] = 0.5 + (box[c, 1] - 0.5) * s
+                        box[c, 2] *= s
+                        box[c, 3] *= s
 
         return to_tensor(img), conf, box
 

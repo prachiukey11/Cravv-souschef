@@ -1,11 +1,12 @@
 import argparse
+import csv
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from model.multitask_model import MultiTaskModel
@@ -29,6 +30,25 @@ def get_device():
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def giou_loss(pred, target, eps=1e-7):
+    px1, py1 = pred[:, 0] - pred[:, 2] / 2, pred[:, 1] - pred[:, 3] / 2
+    px2, py2 = pred[:, 0] + pred[:, 2] / 2, pred[:, 1] + pred[:, 3] / 2
+    tx1, ty1 = target[:, 0] - target[:, 2] / 2, target[:, 1] - target[:, 3] / 2
+    tx2, ty2 = target[:, 0] + target[:, 2] / 2, target[:, 1] + target[:, 3] / 2
+
+    inter_w = (torch.min(px2, tx2) - torch.max(px1, tx1)).clamp(min=0)
+    inter_h = (torch.min(py2, ty2) - torch.max(py1, ty1)).clamp(min=0)
+    inter = inter_w * inter_h
+    union = (px2 - px1) * (py2 - py1) + (tx2 - tx1) * (ty2 - ty1) - inter + eps
+    iou_val = inter / union
+
+    enc_w = torch.max(px2, tx2) - torch.min(px1, tx1)
+    enc_h = torch.max(py2, ty2) - torch.min(py1, ty1)
+    enc_area = enc_w * enc_h + eps
+    giou = iou_val - (enc_area - union) / enc_area
+    return (1 - giou).mean()
 
 
 def iou(b1, b2):
@@ -106,6 +126,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--log", default="training_log.csv", help="CSV file for per-epoch metrics")
+    parser.add_argument("--patience", type=int, default=7, help="early stop after N epochs without improvement")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -134,6 +156,10 @@ def main():
     val_det_loader = DataLoader(val_det, batch_size=8)
     val_cls_loader = DataLoader(val_cls, batch_size=16)
 
+    train_eval_seg = DataLoader(Subset(train_seg, range(min(64, len(train_seg)))), batch_size=8)
+    train_eval_det = DataLoader(Subset(train_det, range(min(64, len(train_det)))), batch_size=8)
+    train_eval_cls = DataLoader(Subset(train_cls, range(min(64, len(train_cls)))), batch_size=16)
+
     det_iter = cycle(det_loader)
     cls_iter = cycle(cls_loader)
 
@@ -142,7 +168,6 @@ def main():
     loss_seg = nn.CrossEntropyLoss()
     loss_cls = nn.CrossEntropyLoss(weight=cls_weights)
     loss_conf = nn.BCEWithLogitsLoss()
-    loss_box = nn.L1Loss()
 
     backbone_params, head_params = [], []
     for name, p in model.named_parameters():
@@ -158,9 +183,23 @@ def main():
 
     w = cfg["loss_weights"]
     best = 0.0
+    epochs_since_best = 0
+
+    log_path = Path(args.log)
+    log_file = open(log_path, "w", newline="")
+    writer = csv.writer(log_file)
+    writer.writerow([
+        "epoch", "loss_total", "loss_seg", "loss_det", "loss_cls",
+        "val_mIoU", "val_mAP", "val_acc",
+        "train_mIoU", "train_mAP", "train_acc",
+        "avg_score",
+    ])
+    log_file.flush()
 
     for epoch in range(1, epochs + 1):
         model.train()
+        sum_total = sum_seg = sum_det = sum_cls = 0.0
+        n_batches = 0
         pbar = tqdm(seg_loader, desc=f"Epoch {epoch}/{epochs}")
         for seg_imgs, seg_masks in pbar:
             seg_imgs, seg_masks = seg_imgs.to(device), seg_masks.to(device)
@@ -173,24 +212,54 @@ def main():
             l_det = loss_conf(pc, det_confs)
             mask = det_confs == 1
             if mask.any():
-                l_det = l_det + 5.0 * loss_box(pb[mask], det_boxes[mask])
+                l_det = l_det + 2.0 * giou_loss(pb[mask], det_boxes[mask])
             l_cls = loss_cls(model(cls_imgs, task="cls")["cls"], cls_labels)
 
             total = w["seg"] * l_seg + w["det"] * l_det + w["cls"] * l_cls
             total.backward()
             optim.step()
+
+            sum_total += total.item()
+            sum_seg += l_seg.item()
+            sum_det += l_det.item()
+            sum_cls += l_cls.item()
+            n_batches += 1
             pbar.set_postfix(loss=f"{total.item():.3f}")
 
         sched.step()
 
+        avg_total = sum_total / n_batches
+        avg_seg = sum_seg / n_batches
+        avg_det = sum_det / n_batches
+        avg_cls = sum_cls / n_batches
+
         mIoU, mAP, acc = validate(model, val_seg_loader, val_det_loader, val_cls_loader, device)
+        t_mIoU, t_mAP, t_acc = validate(model, train_eval_seg, train_eval_det, train_eval_cls, device)
         score = (mIoU + mAP + acc) / 3
-        print(f"Epoch {epoch} | mIoU {mIoU:.3f} | mAP {mAP:.3f} | acc {acc:.3f} | avg {score:.3f}")
+        print(f"Epoch {epoch} | loss {avg_total:.3f} (seg {avg_seg:.3f} det {avg_det:.3f} cls {avg_cls:.3f})")
+        print(f"  val  : mIoU {mIoU:.3f} | mAP {mAP:.3f} | acc {acc:.3f} | avg {score:.3f}")
+        print(f"  train: mIoU {t_mIoU:.3f} | mAP {t_mAP:.3f} | acc {t_acc:.3f}  "
+              f"(gap: mIoU {t_mIoU-mIoU:+.3f}, mAP {t_mAP-mAP:+.3f}, acc {t_acc-acc:+.3f})")
+
+        writer.writerow([epoch, f"{avg_total:.4f}", f"{avg_seg:.4f}", f"{avg_det:.4f}", f"{avg_cls:.4f}",
+                         f"{mIoU:.4f}", f"{mAP:.4f}", f"{acc:.4f}",
+                         f"{t_mIoU:.4f}", f"{t_mAP:.4f}", f"{t_acc:.4f}",
+                         f"{score:.4f}"])
+        log_file.flush()
 
         if score > best:
             best = score
+            epochs_since_best = 0
             torch.save(model.state_dict(), "best_model.pt")
-            print(f"Saved best_model.pt (score {best:.3f})")
+            print(f"  --> Saved best_model.pt (score {best:.3f})")
+        else:
+            epochs_since_best += 1
+            if epochs_since_best >= args.patience:
+                print(f"Early stop: no improvement for {args.patience} epochs (best {best:.3f})")
+                break
+
+    log_file.close()
+    print(f"Per-epoch metrics saved to {log_path}")
 
 
 if __name__ == "__main__":
