@@ -65,11 +65,3 @@ python inference.py --checkpoint best_model.pt
 ```
 Output images are saved to `outputs/`.
 
-## Metrics
-
-Reported on the validation set after every epoch:
-- **mIoU** for segmentation
-- **mAP@50** for detection
-- **Top-1 accuracy** for classification
-
-The best model is the one with the highest average of these three.
